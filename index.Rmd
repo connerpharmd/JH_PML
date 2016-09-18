@@ -1,0 +1,118 @@
+---
+title: "PML_course_proj"
+author: "ChrisC"
+date: "September 17, 2016"
+output: html_document
+---
+
+This is my peer graded assignment.  
+
+
+```{r}
+#  Get testing and training data--Note had to change https to http for import to work on my machine...not sure why
+# load packages
+require(caret)
+require(randomForest)
+
+rawdat.train <- read.csv("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv")
+rawdat.test <- read.csv("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv")
+or.train <- rawdat.train
+or.test <- rawdat.test
+```
+
+I realized after reading some documentation from the data website <http://groupware.les.inf.puc-rio.br/har> and looking at the data with the head() function that I needed to eliminate quite a few variables (e.g., variables that were not from the various accelerometers and biosensors).
+
+```{r}
+
+names(or.train)
+remove.vars <- grep("^total|^kurtosis|^skewness|^max|^min|^amplitude|^var|^avg|^stddev|user_name|^raw_timestamp|^X|^cvtd_timestamp|^new_window|^num_window" ,names(or.train))
+keepnames <- names(or.train)[-remove.vars]
+or.train <- or.train[, keepnames]
+names(or.train)
+
+remove.vars <- grep("^total|^kurtosis|^skewness|^max|^min|^amplitude|^var|^avg|^stddev|user_name|^raw_timestamp|^X|^cvtd_timestamp|^new_window|^num_window" ,names(or.test))
+keepnames <- names(or.test)[-remove.vars]
+or.test <- or.test[, keepnames]
+```
+
+Create a training and testing set of data for model building/testing.  You will note that, for final submission, n.size equals the n of all training data (this will look odd at this point); however, when I was prototyping the code chunk below allowed me to start with very small n.size (e.g., 2000) so I could prototype quickly to see what worked and what didn't.
+
+```{r}
+set.seed(1211)
+n.size <- nrow(or.train) # NOTE:when I first ran this I used a much smaller cut of the data for prototyping!
+# n.size <- 15000
+smalldata <- or.train[sample(1:nrow(or.train), n.size), ] 
+intrain <- sample(1:nrow(smalldata), n.size*.75 )
+
+training <- smalldata[intrain, ]
+testing <- smalldata[-intrain,]
+
+```
+
+Since the outcome is categorical, I decided to try tree based methods.  I first started with a basic tree.
+
+```{r}
+
+# try out a simple classification tree
+require(tree)
+tree.train <- tree(classe~., data=training)
+summary(tree.train)
+plot(tree.train)
+text(tree.train, pretty=1)
+
+```
+
+Let's see how the tree did in predicting cases in the training and testing sets (by looking at misclassification rate).
+
+```{r}
+
+# predict values and take a look at traiing misclassification rate
+tree.pred <- predict(tree.train, data= training)
+test <- apply(tree.pred, 1, which.max)
+tree.pred <- factor(test, labels = c("A", "B", "C", "D", "E")) 
+tr.test.misclass <- 1- sum(training$classe==tree.pred)/length(training$classe) # validates misclassification error rate
+
+# lets see what the misclassifcation rate is with test data
+tree.pred <- predict(tree.train, data= testing)
+test <- apply(tree.pred, 1, which.max)
+tree.pred <- factor(test, labels = c("A", "B", "C", "D", "E")) 
+tr.train.misclass <- 1- sum(testing$classe==tree.pred)/length(testing$classe) # validates misclassification error rate
+
+
+tr.train.misclass#test misclassificatoin
+tr.test.misclass
+
+```
+
+Not so great.  But I think we can do better.  From here I went on to try random forest.  You will see that I did not use carets built in RF capabilities as it was throwing all sorts of errors on my machine.  The loop is used to iterate over all values of mtry (tuning parameter) to come about with the optimal value of mtry.  The plot shows how test and train misclassification changes with different values of mtry.
+
+```{r}
+
+#tuning parameter = mtry, there are 48 different possible variables
+train.misclass =double(48)
+test.misclass =double(48)
+
+for(mtry in 1:48){
+  fit <- randomForest(classe~., data=training, mtry=mtry, ntree=400)
+  train.misclass[mtry]= 1- sum(diag(fit$confusion))/nrow(training)
+  pred <- predict(fit, testing)
+  test.misclass[mtry]= 1- sum(pred==testing$classe)/nrow(testing)
+  cat(mtry, " ")
+}
+
+matplot(1:mtry, cbind(test.misclass, train.misclass), pch=19, col=c("red", "blue"), type="b", ylab="Misclassification Rate")
+legend("topright", legend=c("Test","Train"), pch=19, col=c("red","blue"))
+
+```
+
+
+For giggles, let's just go with mtry of 10. Now all we have to do is run the final model and then make predictions.
+
+
+```{r}
+
+final.mod <- randomForest(classe~., data=training, mtry=10)
+
+#predict 20 classes
+predict(final.mod, newdata = or.test)
+```
